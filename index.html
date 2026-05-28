@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Document</title>
+		<script type="text/javascript" src="./UEditorPlus/ueditor.config.js"></script>
+		<script type="text/javascript" src="./UEditorPlus/ueditor.all.js"></script>
+		<script type="text/javascript" src="./UEditorPlus/lang/zh-cn/zh-cn.js"></script>
+
+		<script type="text/javascript" src="./UEditorPlus/xiumi/xiumi-ue-dialog-v5.js"></script>
+		<link rel="stylesheet" href="./UEditorPlus/xiumi/xiumi-ue-v5.css" />
+	</head>
+	<body>
+		<div id="editor" style="height: 300px"></div>
+
+		<script>
+			const token =
+				'eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJhZG1pbiIsImxvZ2luX3VzZXJfa2V5IjoiZDBiMWUxMjgtMzRhZS00ZTA4LTg4NjAtYjM1OTdkNGZkYjQ5In0.AEO4Sbv7YmrUVLn6ShfXnVhw-3hGSkqmZnf1c1IKqmX1IsNFiC-E57oVMkeP4shWTdDxMlD1r4DORskaCTCelQ'
+			var ue = UE.getEditor("editor", {
+				// ... 更多配置
+				shortcutMenu: [],
+				enableAutoSave: false,
+				autoHeightEnabled: false,
+				initialFrameHeight: 300,
+				initialFrameWidth: "100%",
+				zIndex: 9999,
+				loadConfigFromServer: false,
+				serverUrl: "http://192.168.18.7:8080/common/file/upload",
+				serverHeaders: {
+					Authorization: "Bearer " + token,
+				},
+				imageActionName: "image",
+				imageFieldName: "file",
+				imageMaxSize: 10485760,
+				imageAllowFiles: [".png", ".jpg", ".jpeg", ".gif", ".bmp"],
+				imageUrlPrefix: "",
+				audioActionName: "audio",
+				audioFieldName: "file",
+				audioMaxSize: 10485760,
+				audioAllowFiles: [".mp3", ".acc", ".mav", ".ogg", ".flac"],
+				audioUrlPrefix: "",
+				videoActionName: "video",
+				videoFieldName: "file",
+				videoUrlPrefix: "",
+				videoMaxSize: 104857600,
+				videoAllowFiles: [".mp4", ".avi", ".mov", '.rmvb', '.mpeg'],
+				fileActionName: "file",
+				fileFieldName: "file",
+				fileUrlPrefix: "",
+				fileMaxSize: 104857600,
+				fileAllowFiles: [".zip", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".txt", '.pptx'],
+				uploadServiceEnable: true,
+				uploadServiceUpload: (type, file, callback, option) => {
+					console.log(file);
+					const formData = new FormData()
+
+					formData.append('file', file.blob ? file.blob.source : file)
+					formData.append('module', 'circle')
+
+					const xhr = new XMLHttpRequest()
+
+					xhr.open(
+						'POST',
+						'http://192.168.18.7:8080/common/file/upload'
+					)
+
+					xhr.setRequestHeader(
+						'Authorization',
+						'Bearer ' + token
+					)
+
+					// 上传进度
+					xhr.upload.onprogress = (e) => {
+						if (e.lengthComputable) {
+							callback.progress(e.loaded / e.total)
+						}
+					}
+
+					xhr.onload = () => {
+						const data = JSON.parse(xhr.responseText)
+
+						callback.success({
+							state: 'SUCCESS',
+							url: data.url
+						})
+					}
+
+					xhr.onerror = (err) => {
+						callback.error(err)
+					}
+
+					xhr.send(formData)
+				}
+			});
+		</script>
+	</body>
+</html>
