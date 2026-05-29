@@ -16,7 +16,7 @@
 
 		<script>
 			const token =
-				'eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJhZG1pbiIsImxvZ2luX3VzZXJfa2V5IjoiZDBiMWUxMjgtMzRhZS00ZTA4LTg4NjAtYjM1OTdkNGZkYjQ5In0.AEO4Sbv7YmrUVLn6ShfXnVhw-3hGSkqmZnf1c1IKqmX1IsNFiC-E57oVMkeP4shWTdDxMlD1r4DORskaCTCelQ'
+				'eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJhZG1pbiIsImxvZ2luX3VzZXJfa2V5IjoiYjFiYTEzNDQtZDU4YS00Mzc5LWFjODYtMzUwYjc3OTBlMDBkIn0.pShDuO2ANo95eyj_g7YHEtqZohXTZlG3RlDUPOXKMVt6GzoDsuQxjPSUb8XV8eESYz7PVPubD7xX2e8zQzeE8g'
 			var ue = UE.getEditor("editor", {
 				// ... 更多配置
 				shortcutMenu: [],
@@ -93,6 +93,222 @@
 					xhr.send(formData)
 				}
 			});
+			ue.addListener("xiumiPaste", async (type, data) => {
+				// 编辑器粘贴事件
+				const content = await processXiumiHtml(data.html);
+				ue.execCommand("insertHtml", cleanXiumiHtml(content));
+			});
+
+			/**
+			 * 处理秀米 HTML
+			 * 作用：
+			 * 1. 提取 img/video/src/data-src
+			 * 2. 提取 background-image url()
+			 * 3. 上传远程资源到自己服务器
+			 * 4. 替换为本地地址
+			 * 5. 兼容 &amp; / &quot; / inline style
+			 * 6. 避免 regex 替换 HTML 的各种坑
+			 */
+			async function processXiumiHtml(htmlStr) {
+				const parser = new DOMParser();
+				const doc = parser.parseFromString(htmlStr, "text/html");
+
+				/**
+				 * 上传缓存
+				 * 防止重复上传同一个 URL
+				 */
+				const uploadCache = new Map();
+
+				/**
+				 * 上传函数
+				 */
+				const uploadFile = async (url) => {
+					if (!url) return "";
+
+					// 已上传直接返回
+					if (uploadCache.has(url)) {
+						return uploadCache.get(url);
+					}
+
+					try {
+						const uploadResp = await fetch(
+							"http://192.168.18.7:8080/common/ueditor/url/upload", {
+								method: "POST",
+								headers: {
+									"Content-Type": "application/json",
+									Authorization: "Bearer " + token,
+								},
+								body: JSON.stringify({
+									url
+								}),
+							}
+						);
+
+						const result = await uploadResp.json();
+
+						const newUrl = result.url || result.data?.url || "";
+
+						if (newUrl) {
+							uploadCache.set(url, newUrl);
+							return newUrl;
+						}
+
+						return url;
+					} catch (e) {
+						console.warn("❌ 上传失败:", url, e);
+						return url;
+					}
+				};
+
+				/**
+				 * =========================
+				 * 1. 处理 img / video
+				 * =========================
+				 */
+				const mediaElements = doc.querySelectorAll("img, video");
+
+				for (const el of mediaElements) {
+					const attrs = ["src", "data-src", "poster"];
+
+					for (const attr of attrs) {
+						let oldUrl = el.getAttribute(attr);
+
+						if (!oldUrl) continue;
+
+						oldUrl = oldUrl.trim();
+
+						// 只处理 http
+						if (!/^https?:\/\//i.test(oldUrl)) continue;
+
+						const newUrl = await uploadFile(oldUrl);
+
+						if (newUrl) {
+							el.setAttribute(attr, newUrl);
+						}
+					}
+				}
+
+				/**
+				 * =========================
+				 * 2. 处理 style background-image
+				 * =========================
+				 */
+				const allElements = doc.querySelectorAll("*");
+
+				for (const el of allElements) {
+					const style = el.getAttribute("style");
+
+					if (!style) continue;
+
+					let newStyle = style;
+
+					/**
+					 * 匹配：
+					 * url(xxx)
+					 * url('xxx')
+					 * url("xxx")
+					 * url(&quot;xxx&quot;)
+					 */
+					const urlRegex =
+						/url\(\s*(?:&quot;|["'])?(https?:\/\/[^)"']+)(?:&quot;|["'])?\s*\)/gi;
+
+					const matches = [...style.matchAll(urlRegex)];
+
+					for (const match of matches) {
+						const oldUrl = match[1];
+
+						if (!oldUrl) continue;
+
+						const decodedUrl = oldUrl
+							.replace(/&amp;/g, "&")
+							.replace(/&#x2F;/g, "/");
+
+						const newUrl = await uploadFile(decodedUrl);
+
+						if (newUrl) {
+							newStyle = newStyle.replace(oldUrl, newUrl);
+						}
+					}
+
+					el.setAttribute("style", newStyle);
+				}
+
+				/**
+				 * =========================
+				 * 3. 处理 SVG image href
+				 * =========================
+				 */
+				const svgImages = doc.querySelectorAll("image");
+
+				for (const el of svgImages) {
+					const href = el.getAttribute("xlink:href") || el.getAttribute("href");
+
+					if (!href) continue;
+
+					if (!/^https?:\/\//i.test(href)) continue;
+
+					const newUrl = await uploadFile(href);
+
+					if (newUrl) {
+						el.setAttribute("href", newUrl);
+						el.setAttribute("xlink:href", newUrl);
+					}
+				}
+
+				/**
+				 * =========================
+				 * 4. 处理 data-background
+				 * =========================
+				 */
+				const bgElements = doc.querySelectorAll("[data-background]");
+
+				for (const el of bgElements) {
+					const oldUrl = el.getAttribute("data-background");
+
+					if (!oldUrl) continue;
+
+					if (!/^https?:\/\//i.test(oldUrl)) continue;
+
+					const newUrl = await uploadFile(oldUrl);
+
+					if (newUrl) {
+						el.setAttribute("data-background", newUrl);
+					}
+				}
+
+				/**
+				 * =========================
+				 * 5. 去除秀米可能存在的 script
+				 * =========================
+				 */
+				doc.querySelectorAll("script").forEach((el) => {
+					el.remove();
+				});
+
+				/**
+				 * =========================
+				 * 6. 返回最终 HTML
+				 * =========================
+				 */
+				return doc.body.innerHTML;
+			}
+
+			function cleanXiumiHtml(html) {
+				return (
+					html
+					// 删除 crossorigin
+					.replace(/\s?crossorigin=(['"])[^'"]*\1/gi, "")
+
+					// 删除 integrity
+					.replace(/\s?integrity=(['"])[^'"]*\1/gi, "")
+
+					// 删除 referrerpolicy
+					.replace(/\s?referrerpolicy=(['"])[^'"]*\1/gi, "")
+
+					// 删除危险事件
+					.replace(/\son\w+=(['"])[^'"]*\1/gi, "")
+				);
+			}
 		</script>
 	</body>
 </html>
